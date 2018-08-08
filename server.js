@@ -1,13 +1,62 @@
 // Import the installed modules.
+const Influx = require('influx');
 const express = require('express');
 const responseTime = require('response-time')
 const axios = require('axios');
 const redis = require('redis');
+
 const client = redis.createClient(process.env.REDIS_URL);
+
+const influx = new Influx.InfluxDB({
+ host: "localhost",
+ database: "api_response_times",
+ schema: [
+   {
+     measurement: "response_times",
+     fields: {
+       //userid: Influx.FieldType.INTEGER,
+       response_time: Influx.FieldType.FLOAT,
+       query: Influx.FieldType.STRING,
+       raw: Influx.FieldType.STRING
+     },
+     tags: [
+       "github"
+     ]
+   }
+ ]
+});
+
+influx.getDatabaseNames()
+  .then(names => {
+    if (!names.includes('api_response_times')) {
+      return influx.createDatabase(dbname);
+    }
+  });
+
+
+function saveTweetToInflux(result) {
+  influx.writePoints([
+    {
+      measurement: 'response_times',
+      tags: {                        // array of matched keywords
+        keywords: (result.tags.length > 0 ? result.tags.join(",") : [])
+      },
+      fields: {
+        response_time: result.response,
+        query: result.query,
+        raw: result.resultJSON,
+      },
+    }
+  ]).catch(err => {
+    console.error(`Error saving data to InfluxDB! ${err.stack}`);
+  });
+}
 
 const app = express();
 
 app.use(responseTime());
+
+
 
 
 
@@ -31,6 +80,7 @@ app.get('/api/search', (req, res) => {
           // Save API response in Redis
           client.setex(`github:${query}`, 3600, JSON.stringify({ source: 'Redis Cache', ...responseJSON, }));
           // Send JSON
+          console.log(res.status(200).json({ source: 'Github API', ...responseJSON, }));
           return res.status(200).json({ source: 'Github API', ...responseJSON, });
         })
         .catch(err => {
